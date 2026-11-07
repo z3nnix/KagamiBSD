@@ -3,7 +3,10 @@ Just another operating system. Zero tainted code
 
 ## Quick start
 ```
-make iso && make run
+make fetch-source
+make bootstrap
+make
+make run
 ```
 
 ## LICENSE

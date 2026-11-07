@@ -18,8 +18,9 @@ warn() {
 }
 
 check_cmd make
-check_cmd gcc
-check_cmd git
+check_cmd sha256sum
+check_cmd tar
+check_cmd zstd
 check_cmd grub-mkrescue
 check_cmd grub-mkimage
 check_cmd xorriso
@@ -27,16 +28,33 @@ check_cmd mcopy
 check_cmd mtools
 check_cmd qemu-system-x86_64
 
-if [ -x "$ROOT/kernel/src/build.sh" ]; then
-	printf 'ok: NetBSD source\n'
+if [ -x "$ROOT/kernel/netbsd/build.sh" ] && [ -d "$ROOT/kernel/netbsd/sys" ] && \
+	[ -d "$ROOT/kernel/netbsd/common" ] && [ -d "$ROOT/kernel/netbsd/share/mk" ]; then
+	printf 'ok: vendored NetBSD source\n'
 else
-	warn "NetBSD source not found: $ROOT/kernel/src (run make fetch-source)"
+	printf 'missing: vendored NetBSD source in %s\n' "$ROOT/kernel/netbsd"
+	FAIL=1
 fi
 
+TOOLCHAIN_ARCHIVE="$ROOT/toolchain/netbsd-amd64-tools-14.4.0-36eddeb.tar.zst"
+TOOLCHAIN_SUMS="$ROOT/toolchain/SHA256SUMS"
+
 if [ -x "$ROOT/tools/bin/x86_64--netbsd-gcc" ]; then
-	printf 'ok: NetBSD gcc toolchain\n'
+	printf 'ok: extracted toolchain\n'
+elif [ -f "$TOOLCHAIN_ARCHIVE" ]; then
+	warn "toolchain is not extracted (run make bootstrap)"
 else
-	warn "NetBSD gcc toolchain not found (run make bootstrap)"
+	printf 'missing: toolchain archive and extracted toolchain\n'
+	FAIL=1
+fi
+
+if [ -f "$TOOLCHAIN_ARCHIVE" ] && [ -f "$TOOLCHAIN_SUMS" ]; then
+	if (cd "$ROOT/toolchain" && sha256sum -c "$(basename "$TOOLCHAIN_SUMS")" >/dev/null 2>&1); then
+		printf 'ok: toolchain checksum\n'
+	else
+		printf 'invalid: toolchain checksum\n'
+		FAIL=1
+	fi
 fi
 
 if [ -f "$ROOT/kagami/branding/grub.cfg" ]; then
@@ -55,16 +73,6 @@ if ls /usr/lib/grub/*/command.lst >/dev/null 2>&1; then
 	fi
 else
 	warn 'GRUB module directory not found'
-fi
-
-if [ -d "$ROOT/kernel/src/.git" ] && [ -f "$ROOT/kagami/netbsd.rev" ]; then
-	WANT=$(tr -d '[:space:]' < "$ROOT/kagami/netbsd.rev")
-	GOT=$(git -C "$ROOT/kernel/src" rev-parse HEAD 2>/dev/null || true)
-	if [ -n "$GOT" ] && [ "$WANT" != "$GOT" ]; then
-		warn "NetBSD source is $GOT, pinned is $WANT"
-	else
-		printf 'ok: NetBSD source revision\n'
-	fi
 fi
 
 AVAIL=$(df -Pk "$ROOT" | awk 'NR == 2 { print $4 }')

@@ -12,26 +12,47 @@ ISO ?= $(ROOT)/dist/kagamibsd.iso
 ISO_ROOT := $(ROOT)/build/iso
 ISO_TMP := $(ROOT)/build/kagamibsd.iso
 
+TOOLS ?= $(ROOT)/tools
+TOOLCHAIN_ARCHIVE ?= $(ROOT)/toolchain/netbsd-amd64-tools-14.4.0-36eddeb.tar.zst
+TOOLCHAIN_SUMS ?= $(ROOT)/toolchain/SHA256SUMS
+
 QEMU ?= qemu-system-x86_64
 QEMU_OPTS ?= -m 2G -smp 2 -cdrom $(ISO) -boot d
 KVM := $(shell test -w /dev/kvm && echo -enable-kvm)
 
 GRUB_MKRESCUE_OPTS ?=
 
-.PHONY: all kernel kernel-fast tools bootstrap iso run run-only doctor fetch-source pin-source help clean kernel-clean tools-clean distclean check-kernel check-branding
+.PHONY: all kernel kernel-fast bootstrap tools iso run run-only doctor help clean kernel-clean tools-clean distclean check-kernel check-branding
 
 all:
 	+$(MAKE) kernel
 	+$(MAKE) iso
 
-kernel:
+kernel: bootstrap
 	+$(MAKE) -C $(ROOT)/kernel
 
-kernel-fast:
+kernel-fast: bootstrap
 	+$(MAKE) -C $(ROOT)/kernel fast
 
-tools bootstrap:
-	+$(MAKE) -C $(ROOT)/kernel tools
+bootstrap tools:
+	@if [ ! -x "$(TOOLS)/bin/x86_64--netbsd-gcc" ]; then \
+		test -f "$(TOOLCHAIN_ARCHIVE)" || { \
+			echo "toolchain archive not found: $(TOOLCHAIN_ARCHIVE)"; \
+			exit 1; \
+		}; \
+		test -f "$(TOOLCHAIN_SUMS)" || { \
+			echo "toolchain checksums not found: $(TOOLCHAIN_SUMS)"; \
+			exit 1; \
+		}; \
+		cd "$(ROOT)/toolchain" && sha256sum -c "$(TOOLCHAIN_SUMS)"; \
+		mkdir -p "$(TOOLS)"; \
+		tar --zstd -xf "$(TOOLCHAIN_ARCHIVE)" -C "$(TOOLS)"; \
+	fi
+	@$(ROOT)/scripts/relocate-toolchain.sh
+	@test -x "$(TOOLS)/bin/x86_64--netbsd-gcc" || { \
+		echo "toolchain bootstrap failed"; \
+		exit 1; \
+	}
 
 iso: check-kernel check-branding
 	rm -rf $(ISO_ROOT)
@@ -45,7 +66,7 @@ iso: check-kernel check-branding
 check-kernel:
 	@if [ ! -f "$(KERNEL_IMAGE)" ]; then \
 		if [ "$(KERNEL_IMAGE)" = "$(DEFAULT_KERNEL)" ]; then \
-			$(MAKE) -C $(ROOT)/kernel; \
+			$(MAKE) kernel; \
 		else \
 			echo "kernel not found: $(KERNEL_IMAGE)"; \
 			exit 1; \
@@ -68,29 +89,20 @@ run-only:
 doctor:
 	@$(ROOT)/scripts/doctor.sh
 
-fetch-source:
-	@$(ROOT)/scripts/fetch-netbsd.sh
-
-pin-source:
-	@git -C $(ROOT)/kernel/src rev-parse HEAD > $(ROOT)/kagami/netbsd.rev
-	@printf 'pinned: %s\n' "$$(cat $(ROOT)/kagami/netbsd.rev)"
-
 help:
 	@printf '%s\n' \
 		'make              build kernel and ISO' \
 		'make kernel       build or update the NetBSD kernel' \
 		'make kernel-fast  incremental kernel rebuild via nbmake' \
-		'make bootstrap    build the NetBSD gcc cross toolchain' \
+		'make bootstrap    extract and relocate the prebuilt toolchain' \
 		'make iso          build ISO from the current kernel artifact' \
 		'make run          build ISO if needed and run QEMU' \
 		'make run-only     run the existing ISO without rebuilding' \
-		'make doctor       check host tools, source, branding and GRUB' \
-		'make fetch-source checkout the pinned NetBSD source' \
-		'make pin-source   pin the current NetBSD source commit' \
+		'make doctor       check host tools, source, toolchain and GRUB' \
 		'make clean        remove build/ and dist/' \
 		'make kernel-clean remove kernel objects and artifact' \
-		'make tools-clean  remove the cross toolchain' \
-		'make distclean    remove all generated files except kernel/src'
+		'make tools-clean  remove the extracted toolchain' \
+		'make distclean    remove all generated files except vendored source'
 
 clean:
 	rm -rf $(ROOT)/build $(ROOT)/dist
@@ -100,7 +112,7 @@ kernel-clean:
 	rm -rf $(ROOT)/build/kernel
 
 tools-clean:
-	rm -rf $(ROOT)/tools $(ROOT)/obj/tools
+	rm -rf $(TOOLS)
 
 distclean: clean kernel-clean tools-clean
 	rm -rf $(ROOT)/obj

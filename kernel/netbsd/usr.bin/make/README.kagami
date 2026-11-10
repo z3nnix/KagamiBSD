@@ -1,2 +1,0 @@
-Vendored source subset does not include usr.bin/make.
-This placeholder satisfies the NetBSD build.sh top-level check.
